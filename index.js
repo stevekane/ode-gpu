@@ -102,7 +102,7 @@ var draw = regl({
     void main () {
       float redness = clamp(abs(speed), 0., 1.);
 
-      gl_FragColor = vec4(redness, 1. - redness, 1, 1); 
+      gl_FragColor = vec4(redness, 1. - redness, 0, 1); 
     } 
   `,
   attributes: {
