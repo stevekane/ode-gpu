@@ -4,12 +4,6 @@ const regl = require('regl')({ extensions: [ 'OES_texture_float' ] })
 const camera = require('regl-camera')(regl, {
   center: [ 0, 2.5, 0 ]
 })
-const bt = {
-  positions: [ [ -4, -4 ], [ 0, 4 ], [ 4, -4 ] ],
-  cells: [ 0, 1, 2 ]
-}
-
-
 const drawBunny = regl({
   frag: `
     precision mediump float;
@@ -47,13 +41,13 @@ const drawBunny = regl({
     }
   `,
   attributes: {
-    position: regl.prop('positions'),
-    normal: regl.prop('normals')
+    position: regl.prop('model.positions'),
+    normal: regl.prop('model.normals')
   },
   uniforms: {
     light: regl.prop('light') 
   },
-  elements: regl.prop('elements')
+  elements: regl.prop('model.elements')
 })
 
 const bunnyModel = {
@@ -63,9 +57,7 @@ const bunnyModel = {
 }
 
 var state = {
-  positions: bunny.positions,
-  normals: normals(bunny.cells, bunny.positions),
-  elements: bunny.cells,
+  model: bunnyModel,
   light: [ 0, 20, 0 ]
 }
 
