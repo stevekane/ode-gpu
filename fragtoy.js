@@ -32,12 +32,26 @@ const fragToy = regl({
     #define EPSILON 0.1
     #define FOV 45.
 
-    float sdf_sphere ( vec3 p ) {
-      return length(p) - 1.;
+    float sdf_sphere ( vec3 p, vec3 c, float r ) {
+      return distance(p, c) - r;
+    }
+
+    float vmax ( vec3 v ) {
+      return max(max(v.x, v.y), v.z);
+    }
+
+    float sdf_cube ( vec3 p, vec3 c, vec3 s ) {
+      return vmax(abs(p - c) - s);
     }
 
     float sdf_scene ( vec3 p ) {
-      return sdf_sphere(p);
+      vec3 b = vec3(1.);
+      vec3 c = vec3(0.);
+      float a = (sin(tick / 100.) + 1.) / 2.;
+      float ds = sdf_sphere(p, c, 1.);
+      float dc = sdf_cube(p, c, b);
+
+      return mix(dc, ds, a);
     }
 
     float to_surface ( vec3 eye, vec3 dir ) {
