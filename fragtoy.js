@@ -25,11 +25,10 @@ const fragToy = regl({
     uniform vec3 eye;
     uniform vec3 light;
 
-    #define MARCH_STEPS 255
+    #define MARCH_STEPS 25
     #define MIN_DIST 0.0
-    #define MAX_DIST 100.0
-    #define NEARLY_ZERO 0.0001
-    #define EPSILON 0.1
+    #define MAX_DIST 1000.0
+    #define EPSILON 0.0001
     #define FOV 45.
 
     float sdf_sphere ( vec3 p, vec3 c, float r ) {
@@ -45,10 +44,11 @@ const fragToy = regl({
     }
 
     float sdf_scene ( vec3 p ) {
-      vec3 b = vec3(1.);
+      float r = 1.;
+      vec3 b = vec3(r);
       vec3 c = vec3(0.);
-      float a = (sin(tick / 100.) + 1.) / 2.;
-      float ds = sdf_sphere(p, c, 1.);
+      float a = (sin(tick / 20.) + 1.) / 2.;
+      float ds = sdf_sphere(p, c, r);
       float dc = sdf_cube(p, c, b);
 
       return mix(dc, ds, a);
@@ -60,7 +60,7 @@ const fragToy = regl({
       for ( int i = 0; i < MARCH_STEPS; i++) {
         float dist = sdf_scene(eye + depth * dir); 
 
-        if ( dist < NEARLY_ZERO ) return depth;
+        if ( dist < EPSILON ) return depth;
         
         depth += dist;
 
@@ -78,27 +78,48 @@ const fragToy = regl({
 
     vec3 normal ( vec3 p ) {
       return normalize(vec3(
-        sdf_scene(vec3(p.x + EPSILON, p.y, p.z) - sdf_scene(vec3(p.x - EPSILON, p.y, p.z))),
-        sdf_scene(vec3(p.x, p.y + EPSILON, p.z) - sdf_scene(vec3(p.x, p.y - EPSILON, p.z))),
-        sdf_scene(vec3(p.x, p.y, p.z + EPSILON) - sdf_scene(vec3(p.x, p.y, p.z - EPSILON)))
+        sdf_scene(vec3(p.x + EPSILON, p.y, p.z)) - sdf_scene(vec3(p.x - EPSILON, p.y, p.z)),
+        sdf_scene(vec3(p.x, p.y + EPSILON, p.z)) - sdf_scene(vec3(p.x, p.y - EPSILON, p.z)),
+        sdf_scene(vec3(p.x, p.y, p.z + EPSILON)) - sdf_scene(vec3(p.x, p.y, p.z - EPSILON))
       ));
+    }
+
+    vec3 phong_per_light ( vec3 k_d, vec3 k_s, float alpha, vec3 intensity, vec3 light, vec3 eye, vec3 p ) {
+      vec3 n = normal(p);
+      vec3 l = normalize(light - p);
+      vec3 v = normalize(eye - p);
+      vec3 r = normalize(reflect(-l, n));
+      float dotLN = dot(l, n);
+      float dotRV = dot(r, v);
+
+      return dotLN < 0. 
+        ? vec3(0.)
+        : dotRV < 0.
+          ? intensity * k_d * dotLN
+          : intensity * k_d * dotLN + k_s * pow(dotRV, alpha);
+    }
+
+    vec3 phong_illumination ( vec3 k_a, vec3 k_d, vec3 k_s, float alpha, vec3 light, vec3 eye, vec3 p ) {
+      vec3 ambient = vec3(.1);
+      vec3 color = ambient * k_a;
+      vec3 intensity = vec3(1.);
+
+      color += phong_per_light(k_d, k_s, alpha, intensity, light, eye, p);
+      return color;
     }
       
     void main () {
       vec3 dir = ray_direction(FOV, viewport);
       float dist = to_surface(eye, dir);
-      vec3 p = dist * dir + eye;
-      vec3 n = normal(p);
-      vec3 l = normalize(light - p);
-      vec3 v = normalize(eye - p);
-      float dotLN = dot(l, n);
-      float diffuse = clamp(dotLN, 0., 1.);
-      float ambient = 0.05;
-      float i = diffuse + ambient;
+      vec3 p = eye + dist * dir;
+      vec3 k_a = vec3(.2);
+      vec3 k_d = vec3(.7, .2, .2);
+      vec3 k_s = vec3(1.);
+      float alpha = 10.;
 
-      gl_FragColor = dist > MAX_DIST - NEARLY_ZERO
-        ? vec4(0, 0, 0, 1)
-        : vec4(i, i, i, 1);
+      gl_FragColor = dist > MAX_DIST - EPSILON
+        ? vec4(0)
+        : vec4(phong_illumination(k_a, k_d, k_s, alpha, light, eye, p), 1);
     } 
   `,
   uniforms: {
@@ -115,7 +136,8 @@ const fragToy = regl({
 })
 
 const clearProps = {
-  color: [ 0, 0, 0, 0 ]
+  color: [ 0, 0, 0, 0 ],
+  depth: true
 }
 
 const props = {
@@ -139,10 +161,11 @@ regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   props.mouse[1] = 1 - domMouse[1] * pixelRatio / viewportHeight
   props.viewport[0] = viewportWidth
   props.viewport[1] = viewportHeight
-  // props.light[0] = props.mouse[0] * 10 - 5
-  // props.light[1] = props.mouse[1] * 10 - 5
-  props.light[0] = Math.sin(tick / 100) * 10
-  //props.light[2] = Math.cos(tick / 100) * 10
+
+  props.light[0] = props.mouse[0] * 10 - 5
+  props.light[1] = props.mouse[1] * 10 - 5
+  // props.light[0] = Math.sin(tick / 100) * 10
+  // props.light[2] = Math.cos(tick / 100) * 10
   regl.clear(clearProps)
   fragToy(props)
 })
