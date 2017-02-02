@@ -32,7 +32,7 @@ const fragToy = regl({
     #define MARCH_STEPS 150
     #define MIN_DIST 0.0
     #define MAX_DIST 100.0
-    #define EPSILON 0.001
+    #define EPSILON 0.01
     #define FOV 45.
 
     #pragma glslify: sdf_sphere = require('glsl-sdf-primitives/sdSphere')
