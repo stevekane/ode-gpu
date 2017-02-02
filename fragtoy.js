@@ -1,4 +1,5 @@
 const regl = require('regl')({ extensions: [ 'OES_texture_float' ] })
+const glslify = require('glslify')
 const canvas = regl._gl.canvas
 
 const fragToy = regl({
@@ -15,7 +16,7 @@ const fragToy = regl({
       gl_Position = vec4(pos, 0., 1.); 
     } 
   `,
-  frag: `
+  frag: glslify`
     precision mediump float;
 
     uniform float tick;
@@ -31,25 +32,16 @@ const fragToy = regl({
     #define EPSILON 0.0001
     #define FOV 45.
 
-    float sdf_sphere ( vec3 p, vec3 c, float r ) {
-      return distance(p, c) - r;
-    }
-
-    float vmax ( vec3 v ) {
-      return max(max(v.x, v.y), v.z);
-    }
-
-    float sdf_cube ( vec3 p, vec3 c, vec3 s ) {
-      return vmax(abs(p - c) - s);
-    }
+    #pragma glslify: sdf_cube = require('glsl-sdf-primitives/sdBox')
+    #pragma glslify: sdf_sphere = require('glsl-sdf-primitives/sdSphere')
 
     float sdf_scene ( vec3 p ) {
       float r = 1.;
       vec3 b = vec3(r);
       vec3 c = vec3(0.);
       float a = (sin(tick / 20.) + 1.) / 2.;
-      float ds = sdf_sphere(p, c, r);
-      float dc = sdf_cube(p, c, b);
+      float ds = sdf_sphere(p, r);
+      float dc = sdf_cube(p, b);
 
       return mix(dc, ds, a);
     }
