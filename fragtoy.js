@@ -7,6 +7,17 @@ const { normal, phong_illumination, phong_per_light } = require('./glsl/lighting
 const { ray_direction, to_surface } = require('./glsl/ray_marching')
 const canvas = regl._gl.canvas
 
+const edits = regl.texture({
+  data: [ 
+    0, 1.4,   0,   0,   0, 0, 0, 0,
+    1, 1.2, 1.2, 1.2,   2, 0, 0, 0
+  ],
+  type: 'float',
+  shape: [ 2, 2 ],
+  min: 'nearest',
+  mag: 'nearest',
+  wrap: 'clamp'
+})
 const fragToy = regl({
   vert: `
     precision mediump float;
@@ -32,8 +43,25 @@ const fragToy = regl({
     uniform vec3 target;
     uniform mat4 camera_matrix;
     uniform vec3 light;
+    
+    // n is the max number of edits in the list
+    // use 4 x n texture to store transform matrix 
+    // use 2 x n texture to store
+    //   r <- primitive kind
+    //   g <- optional primitive param
+    //   b <- optional primitive param
+    //   a <- optional primitive param
+    //
+    //   r <- operation kind
+    //   g <- optional operation param
+    //   b <- optional operation param
+    //   a <- optional operation param
+
+    // uniform sampler2D transforms;
+    uniform sampler2D edits;
 
     const int MARCH_STEPS = 500;
+    const int MAX_EDITS = 2;
     const float MIN_DIST = 0.1;
     const float MAX_DIST = 1000.;
     const float EPSILON = 0.0001;
@@ -41,6 +69,47 @@ const fragToy = regl({
     const float FOV_FACTOR = 2. / tan(radians(45.));
 
     ${ look_at + vmax + sdf_union_round + repeat_along + sdf_sphere + sdf_box }
+
+    float sdf_intersection ( float a, float b ) {
+      return max(a, b); 
+    }
+
+    float sdf_union ( float a, float b ) {
+      return min(a, b); 
+    }
+
+    float sdf_difference ( float a, float b ) {
+      return max(a, -b); 
+    }
+
+    // float apply_edit ( float d, int i, vec3 p ) {
+    //   vec4 p_data = texture2D(edits, vec2(0, i));
+    //   vec4 o_data = texture2D(edits, vec2(1, i));
+    //   float prim = p_data.r;
+    //   float op = o_data.r;
+    //   float r;
+    //   float n;
+
+    //   if      ( prim == 0. ) n = sdf_sphere(p, p_data.g);
+    //   else if ( prim == 1. ) n = sdf_box(p, vec3(p_data.g)); 
+    //   else                   n = MAX_DIST; 
+
+    //   if      ( op == 0. )   r = n;
+    //   else if ( op == 1. )   r = sdf_union(d, n);
+    //   else if ( op == 2. )   r = sdf_intersection(d, n);
+    //   else if ( op == 3. )   r = sdf_difference(d, n);
+    //   else                   r = n;
+    //   return r;
+    // }
+
+    // float sdf_scene ( vec3 p ) {
+    //   float r = apply_edit(0., 0, p);
+
+    //   for ( int i = 1; i < MAX_EDITS; i++ ) {
+    //     r = apply_edit( r, i, p );
+    //   } 
+    //   return r;
+    // }
 
     float sdf_scene ( vec3 p ) {
       float r = 1.;
@@ -60,7 +129,7 @@ const fragToy = regl({
       return sdf_union_round(
         sdf_sphere((m * vec4(p, 1.)).xyz, r),
         sdf_box(p, b),
-        .3
+        r 
       );
     }
 
@@ -96,7 +165,8 @@ const fragToy = regl({
     eye: regl.prop('eye'),
     target: regl.prop('target'),
     camera_matrix: regl.prop('camera_matrix'),
-    light: regl.prop('light')
+    light: regl.prop('light'),
+    edits: edits
   },
   attributes: {
     pos: [ [ -4, -4 ], [ 0, 4 ], [ 4, -4 ] ]
@@ -182,7 +252,6 @@ regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   props.viewport[1] = viewportHeight
   lookAt(props.camera_matrix, props.eye, props.target, UP)
 
-  // props.light[0] = Math.sin(tick / 50) * 20
   regl.clear(clearProps)
   fragToy(props)
 })
