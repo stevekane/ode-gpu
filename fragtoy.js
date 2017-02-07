@@ -1,6 +1,6 @@
 const regl = require('regl')({ extensions: [ 'OES_texture_float' ] })
-const { lookAt, create } = require('gl-mat4')
-const { cross } = require('gl-vec3')
+const { lookAt, create, translate } = require('gl-mat4')
+const { cross, add, subtract, scale, length, normalize } = require('gl-vec3')
 const look_at = require('./glsl/look_at')
 const { vmax, sdf_union_round, repeat_along, sdf_sphere, sdf_box } = require('./glsl/sdf')
 const { normal, phong_illumination, phong_per_light } = require('./glsl/lighting')
@@ -114,7 +114,7 @@ const props = {
   tick: 0,
   mouse: [ 0, 0 ],
   viewport: [ 0, 0 ],
-  eye: [ 0, 4, 100 ],
+  eye: [ 0, 4, 10 ],
   target: [ 0, 0, 0 ],
   light: [ 0, 6, 0 ],
   camera_matrix: create()
@@ -127,6 +127,8 @@ const buttons = {
   d: false
 }
 const domMouse = [ 0, 0 ]
+const strafe = [ 0, 0, 0 ]
+const forward = [ 0, 0, 0 ]
 
 canvas.addEventListener('mousemove', function ({ clientX, clientY }) {
   domMouse[0] = canvas.offsetLeft + clientX
@@ -160,8 +162,19 @@ regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   const mouseDeltaX = mouseX - props.mouse[0]
   const mouseDeltaY = mouseY - props.mouse[1]
 
-  props.eye[0] += buttons.a + buttons.d
-  props.eye[1] += buttons.w + buttons.s
+  subtract(forward, props.target, props.eye)
+
+  const distance = length(forward)
+
+  normalize(forward, forward)
+  cross(strafe, forward, UP)
+  normalize(strafe, strafe)
+
+  scale(strafe, strafe, (buttons.a + buttons.d) * Math.log(distance))
+  scale(forward, forward, buttons.w + buttons.s)
+  add(props.eye, props.eye, strafe)
+  add(props.eye, props.eye, forward)
+
   props.tick = tick
   props.mouse[0] = mouseX
   props.mouse[1] = mouseY
