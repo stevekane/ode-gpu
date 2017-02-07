@@ -1,3 +1,5 @@
+module.exports =
+`
 ////////////////////////////////////////////////////////////////
 //
 //                           HG_SDF
@@ -789,3 +791,4 @@ float fOpGroove(float a, float b, float ra, float rb) {
 float fOpTongue(float a, float b, float ra, float rb) {
 	return min(a, max(a - ra, abs(b) - rb));
 }
+`

@@ -1,5 +1,10 @@
 const regl = require('regl')({ extensions: [ 'OES_texture_float' ] })
-const glslify = require('glslify')
+const { lookAt, create } = require('gl-mat4')
+const { cross } = require('gl-vec3')
+const look_at = require('./glsl/look_at')
+const { vmax, sdf_union_round, repeat_along, sdf_sphere, sdf_box } = require('./glsl/sdf')
+const { normal, phong_illumination, phong_per_light } = require('./glsl/lighting')
+const { ray_direction, to_surface } = require('./glsl/ray_marching')
 const canvas = regl._gl.canvas
 
 const fragToy = regl({
@@ -16,7 +21,7 @@ const fragToy = regl({
       gl_Position = vec4(pos, 0., 1.); 
     } 
   `,
-  frag: glslify`
+  frag: `
     precision mediump float;
 
     uniform float tick;
@@ -25,40 +30,26 @@ const fragToy = regl({
     uniform vec2 viewport;
     uniform vec3 eye;
     uniform vec3 target;
+    uniform mat4 camera_matrix;
     uniform vec3 light;
 
-    const vec3 up = vec3(0., 1., 0.);
+    const int MARCH_STEPS = 500;
+    const float MIN_DIST = 0.1;
+    const float MAX_DIST = 1000.;
+    const float EPSILON = 0.0001;
+    const float FOV = 45.;
+    const float FOV_FACTOR = 2. / tan(radians(45.));
 
-    #define MARCH_STEPS 150
-    #define MIN_DIST 0.0
-    #define MAX_DIST 100.0
-    #define EPSILON 0.01
-    #define FOV 45.
-
-    #pragma glslify: sdf_sphere = require('glsl-sdf-primitives/sdSphere')
-    #pragma glslify: sdf_difference = require('glsl-sdf-ops/subtraction')
-    #pragma glslify: sdf_intersection = require('glsl-sdf-ops/intersection')
-
-    float sdf_union_round (float a, float b, float r) {
-      vec2 u = max(vec2(r - a,r - b), vec2(0));
-
-      return max(r, min (a, b)) - length(u);
-    }
-
-    float vmax ( vec3 v ) {
-      return max(max(v.x, v.y), v.z); 
-    }
-
-    float sdf_box (vec3 p, vec3 b) {
-      vec3 d = abs(p) - b;
-
-      return length(max(d, vec3(0))) + vmax(min(d, vec3(0)));
-    }
+    ${ look_at + vmax + sdf_union_round + repeat_along + sdf_sphere + sdf_box }
 
     float sdf_scene ( vec3 p ) {
       float r = 1.;
       float x = 0.;
-      float y = sin(tick / 50.) - .5;
+      float y = sin(tick / 40.);
+      float spacing = 8.;
+      float x_index = repeat_along(p.x, spacing);
+      float y_index = repeat_along(p.y, spacing);
+      // float z_index = repeat_along(p.z, spacing);
       float z = 0.;
       vec3 b = vec3(r * 1.2);
       mat4 m = mat4(1.,   0.,   0.,   0., 
@@ -66,85 +57,28 @@ const fragToy = regl({
                     0.,   0.,   1.,   0.,
                     x,    y,    z,    1.);
 
-      return sdf_union_round (
+      return sdf_union_round(
         sdf_sphere((m * vec4(p, 1.)).xyz, r),
         sdf_box(p, b),
         .3
       );
     }
 
-    float to_surface ( vec3 eye, vec3 dir ) {
-      float depth = MIN_DIST;
+    ${ normal + phong_per_light + phong_illumination }
+    ${ to_surface }
 
-      for ( int i = 0; i < MARCH_STEPS; i++) {
-        float dist = sdf_scene(dir * depth + eye); 
-
-        if ( dist < EPSILON ) return depth;
-        
-        depth += dist;
-
-        if ( depth >= MAX_DIST ) return MAX_DIST; 
-      }
-      return MAX_DIST;
-    }
-
-    vec3 normal ( vec3 p ) {
-      return normalize(vec3(
-        sdf_scene(vec3(p.x + EPSILON, p.y, p.z)) - sdf_scene(vec3(p.x - EPSILON, p.y, p.z)),
-        sdf_scene(vec3(p.x, p.y + EPSILON, p.z)) - sdf_scene(vec3(p.x, p.y - EPSILON, p.z)),
-        sdf_scene(vec3(p.x, p.y, p.z + EPSILON)) - sdf_scene(vec3(p.x, p.y, p.z - EPSILON))
-      ));
-    }
-
-    vec3 phong_per_light ( vec3 k_d, vec3 k_s, float alpha, vec3 intensity, vec3 light, vec3 eye, vec3 p ) {
-      vec3 n = normal(p);
-      vec3 l = normalize(light - p);
-      vec3 v = normalize(eye - p);
-      vec3 r = normalize(reflect(-l, n));
-      float dotLN = dot(l, n);
-      float dotRV = dot(r, v);
-
-      return dotLN < 0. 
-        ? vec3(0.)
-        : dotRV < 0.
-          ? intensity * (k_d * dotLN)
-          : intensity * (k_d * dotLN + k_s * pow(dotRV, alpha));
-    }
-
-    vec3 phong_illumination ( vec3 k_a, vec3 k_d, vec3 k_s, float alpha, vec3 light, vec3 eye, vec3 p ) {
-      vec3 ambient = vec3(.1);
-      vec3 color = ambient * k_a;
-      vec3 intensity = vec3(1.);
-
-      color += phong_per_light(k_d, k_s, alpha, intensity, light, eye, p);
-      return color;
-    }
-      
-    vec3 ray_direction ( float fov, vec2 size ) {
+    vec3 ray_direction ( vec2 size ) {
       vec2 xy = gl_FragCoord.xy - size / 2.;
-      float z = size.y / tan(radians(fov) / 2.);
+      float z = FOV_FACTOR * size.y;
 
       return normalize(vec3(xy, -z));
     }
 
-    mat4 look_at (vec3 eye, vec3 center, vec3 up) {
-      vec3 f = normalize(center - eye);
-      vec3 s = cross(f, up);
-      vec3 u = cross(s, f);
-
-      return mat4(
-        vec4(s, 0.0),
-        vec4(u, 0.0),
-        vec4(-f, 0.0),
-        vec4(0.0, 0.0, 0.0, 1));
-    }
-
     void main () {
-      vec3 dir = ray_direction(FOV, viewport);
-      mat4 cam_mat = look_at(eye, target, up);
-      vec3 cam_dir = (cam_mat * vec4(dir, 1.0)).xyz;
+      vec3 dir = ray_direction(viewport);
+      vec3 cam_dir = (vec4(dir, 1.0) * camera_matrix).xyz;
       float dist = to_surface(eye, cam_dir);
-      vec3 p = eye + dist * cam_dir;
+      vec3 p = dist * cam_dir + eye;
       vec3 k_a = vec3(.2);
       vec3 k_d = vec3(.7, .2, .2);
       vec3 k_s = vec3(1.);
@@ -161,6 +95,7 @@ const fragToy = regl({
     mouse: regl.prop('mouse'),
     eye: regl.prop('eye'),
     target: regl.prop('target'),
+    camera_matrix: regl.prop('camera_matrix'),
     light: regl.prop('light')
   },
   attributes: {
@@ -169,6 +104,7 @@ const fragToy = regl({
   count: 3
 })
 
+const UP = [ 0, 1, 0 ]
 const clearProps = {
   color: [ 0, 0, 0, 0 ],
   depth: true
@@ -178,11 +114,18 @@ const props = {
   tick: 0,
   mouse: [ 0, 0 ],
   viewport: [ 0, 0 ],
-  eye: [ 10, 10, 10 ],
+  eye: [ 0, 4, 100 ],
   target: [ 0, 0, 0 ],
-  light: [ 0, 2, 0 ]
+  light: [ 0, 6, 0 ],
+  camera_matrix: create()
 }
 
+const buttons = {
+  w: false,
+  a: false,
+  s: false,
+  d: false
+}
 const domMouse = [ 0, 0 ]
 
 canvas.addEventListener('mousemove', function ({ clientX, clientY }) {
@@ -190,18 +133,43 @@ canvas.addEventListener('mousemove', function ({ clientX, clientY }) {
   domMouse[1] = canvas.offsetTop + clientY
 })
 
+document.body.addEventListener('keydown', function ({ keyCode }) {
+  switch ( keyCode ) {
+    case 87: buttons.w = 1; break 
+    case 65: buttons.a = -1; break 
+    case 83: buttons.s = -1; break 
+    case 68: buttons.d = 1; break 
+    default: break
+  }
+})
+document.body.addEventListener('keyup', function ({ keyCode }) {
+  switch ( keyCode ) {
+    case 87: buttons.w = 0; break 
+    case 65: buttons.a = 0; break 
+    case 83: buttons.s = 0; break 
+    case 68: buttons.d = 0; break 
+    default: break
+  }
+})
+
+window.props = props
+
 regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
+  const mouseX = domMouse[0] * pixelRatio / viewportWidth
+  const mouseY = ((1 - domMouse[1]) * pixelRatio) / viewportHeight 
+  const mouseDeltaX = mouseX - props.mouse[0]
+  const mouseDeltaY = mouseY - props.mouse[1]
+
+  props.eye[0] += buttons.a + buttons.d
+  props.eye[1] += buttons.w + buttons.s
   props.tick = tick
-  props.mouse[0] = domMouse[0] * pixelRatio / viewportWidth
-  props.mouse[1] = 1 - domMouse[1] * pixelRatio / viewportHeight
+  props.mouse[0] = mouseX
+  props.mouse[1] = mouseY
   props.viewport[0] = viewportWidth
   props.viewport[1] = viewportHeight
+  lookAt(props.camera_matrix, props.eye, props.target, UP)
 
-  // props.eye[0] = Math.sin(tick / 60) * 10
-  // props.eye[1] = Math.cos(tick / 60) * 10
-  props.light[0] = Math.sin(tick / 50) * 2
-  props.light[2] = Math.cos(tick / 50) * 2
-  // props.light[1] = Math.cos(tick / 150) * 10
+  // props.light[0] = Math.sin(tick / 50) * 20
   regl.clear(clearProps)
   fragToy(props)
 })
