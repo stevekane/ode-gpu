@@ -6,18 +6,70 @@ const { vmax, sdf_union_round, repeat_along, sdf_sphere, sdf_box } = require('./
 const { normal, phong_illumination, phong_per_light } = require('./glsl/lighting')
 const { ray_direction, to_surface } = require('./glsl/ray_marching')
 const canvas = regl._gl.canvas
+const { abs, sin, cos } = Math
 
-const edits = regl.texture({
-  data: [ 
-    0, 1.4,   0,   0,   0, 0, 0, 0,
-    1, 1.2, 1.2, 1.2,   2, 0, 0, 0
-  ],
-  type: 'float',
-  shape: [ 2, 2 ],
-  min: 'nearest',
-  mag: 'nearest',
-  wrap: 'clamp'
-})
+const OPERATOR = 0
+const SDF = 1
+
+const UNION_ROUND = 0
+
+const SPHERE = 0
+const BOX = 1
+
+// type Scene 
+//   = Operator Scene Scene
+//   | SDF
+
+const sphere = {
+  type: SDF,
+  fn: SPHERE,
+  radius: 1
+}
+
+const scene = {
+  type: OPERATOR,
+  operator: UNION_ROUND,
+  radius: 1,
+  first: {
+    type: SDF,
+    fn: SPHERE,
+    radius: 1
+  },
+  second: {
+    type: SDF,
+    fn: BOX,
+    dimensions: [ 1.2, 1.2, 1.2 ]
+  }
+}
+
+const f = n => n.toPrecision(4)
+const vec3 = ([ x, y, z ]) => `vec3(${ f(x) }, ${ f(y) }, ${ f(z) })`
+
+function glsl ( s, depth = 0 ) {
+  switch ( s.type ) {
+    case SDF: 
+      switch ( s.fn ) {
+        case SPHERE: return `sdf_sphere(p, ${ f(s.radius) })`
+        case BOX:    return `sdf_box(p, ${ vec3(s.dimensions) })`
+        default:     throw new Error('Unknown primitive')
+      } 
+    case OPERATOR:
+      switch ( s.operator ) {
+        case UNION_ROUND: return `sdf_union_round(
+          ${ glsl(s.first) }, 
+          ${ glsl(s.second) }, 
+          ${ f(s.radius) })`
+        default:          throw new Error('Unknown operator')
+      } 
+    default: throw new Error('Invalid scene type')
+  }
+}
+
+
+console.log(glsl(sphere))
+console.log(glsl(scene))
+
+
 const fragToy = regl({
   vert: `
     precision mediump float;
@@ -44,22 +96,6 @@ const fragToy = regl({
     uniform mat4 camera_matrix;
     uniform vec3 light;
     
-    // n is the max number of edits in the list
-    // use 4 x n texture to store transform matrix 
-    // use 2 x n texture to store
-    //   r <- primitive kind
-    //   g <- optional primitive param
-    //   b <- optional primitive param
-    //   a <- optional primitive param
-    //
-    //   r <- operation kind
-    //   g <- optional operation param
-    //   b <- optional operation param
-    //   a <- optional operation param
-
-    // uniform sampler2D transforms;
-    uniform sampler2D edits;
-
     const int MARCH_STEPS = 500;
     const int MAX_EDITS = 2;
     const float MIN_DIST = 0.1;
@@ -82,55 +118,31 @@ const fragToy = regl({
       return max(a, -b); 
     }
 
-    // float apply_edit ( float d, int i, vec3 p ) {
-    //   vec4 p_data = texture2D(edits, vec2(0, i));
-    //   vec4 o_data = texture2D(edits, vec2(1, i));
-    //   float prim = p_data.r;
-    //   float op = o_data.r;
-    //   float r;
-    //   float n;
-
-    //   if      ( prim == 0. ) n = sdf_sphere(p, p_data.g);
-    //   else if ( prim == 1. ) n = sdf_box(p, vec3(p_data.g)); 
-    //   else                   n = MAX_DIST; 
-
-    //   if      ( op == 0. )   r = n;
-    //   else if ( op == 1. )   r = sdf_union(d, n);
-    //   else if ( op == 2. )   r = sdf_intersection(d, n);
-    //   else if ( op == 3. )   r = sdf_difference(d, n);
-    //   else                   r = n;
-    //   return r;
-    // }
-
+    
     // float sdf_scene ( vec3 p ) {
-    //   float r = apply_edit(0., 0, p);
+    //   float r = 1.;
+    //   float x = 0.;
+    //   float y = sin(tick / 40.);
+    //   float spacing = 8.;
+    //   float x_index = repeat_along(p.x, spacing);
+    //   float y_index = repeat_along(p.y, spacing);
+    //   // float z_index = repeat_along(p.z, spacing);
+    //   float z = 0.;
+    //   vec3 b = vec3(r * 1.2);
+    //   mat4 m = mat4(1.,   0.,   0.,   0., 
+    //                 0.,   1.,   0.,   0.,
+    //                 0.,   0.,   1.,   0.,
+    //                 x,    y,    z,    1.);
 
-    //   for ( int i = 1; i < MAX_EDITS; i++ ) {
-    //     r = apply_edit( r, i, p );
-    //   } 
-    //   return r;
+    //   return sdf_union_round(
+    //     sdf_sphere((m * vec4(p, 1.)).xyz, r),
+    //     sdf_box(p, b),
+    //     r 
+    //   );
     // }
 
     float sdf_scene ( vec3 p ) {
-      float r = 1.;
-      float x = 0.;
-      float y = sin(tick / 40.);
-      float spacing = 8.;
-      float x_index = repeat_along(p.x, spacing);
-      float y_index = repeat_along(p.y, spacing);
-      // float z_index = repeat_along(p.z, spacing);
-      float z = 0.;
-      vec3 b = vec3(r * 1.2);
-      mat4 m = mat4(1.,   0.,   0.,   0., 
-                    0.,   1.,   0.,   0.,
-                    0.,   0.,   1.,   0.,
-                    x,    y,    z,    1.);
-
-      return sdf_union_round(
-        sdf_sphere((m * vec4(p, 1.)).xyz, r),
-        sdf_box(p, b),
-        r 
-      );
+      return ${ glsl(scene) };
     }
 
     ${ normal + phong_per_light + phong_illumination }
@@ -165,8 +177,7 @@ const fragToy = regl({
     eye: regl.prop('eye'),
     target: regl.prop('target'),
     camera_matrix: regl.prop('camera_matrix'),
-    light: regl.prop('light'),
-    edits: edits
+    light: regl.prop('light')
   },
   attributes: {
     pos: [ [ -4, -4 ], [ 0, 4 ], [ 4, -4 ] ]
@@ -223,8 +234,6 @@ document.body.addEventListener('keyup', function ({ keyCode }) {
     default: break
   }
 })
-
-window.props = props
 
 regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   const mouseX = domMouse[0] * pixelRatio / viewportWidth
