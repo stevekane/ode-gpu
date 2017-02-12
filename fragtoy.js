@@ -1,74 +1,30 @@
-const regl = require('regl')({ extensions: [ 'OES_texture_float' ] })
-const { lookAt, create, translate } = require('gl-mat4')
+const regl = require('regl')({ 
+  extensions: [ 'OES_texture_float', 'EXT_disjoint_timer_query' ],
+  // profile: true
+})
+const { lookAt, identity, create, translate } = require('gl-mat4')
 const { cross, add, subtract, scale, length, normalize } = require('gl-vec3')
-const look_at = require('./glsl/look_at')
-const { vmax, sdf_union_round, repeat_along, sdf_sphere, sdf_box } = require('./glsl/sdf')
-const { normal, phong_illumination, phong_per_light } = require('./glsl/lighting')
-const { ray_direction, to_surface } = require('./glsl/ray_marching')
+const frag = require('./frag')
 const canvas = regl._gl.canvas
 const { abs, sin, cos } = Math
 
-const OPERATOR = 0
-const SDF = 1
-
-const UNION_ROUND = 0
-
-const SPHERE = 0
-const BOX = 1
-
-// type Scene 
-//   = Operator Scene Scene
-//   | SDF
-
-const sphere = {
-  type: SDF,
-  fn: SPHERE,
-  radius: 1
-}
-
 const scene = {
-  type: OPERATOR,
-  operator: UNION_ROUND,
-  radius: 1,
+  type: 'OPERATOR',
+  operator: 'UNION_ROUND',
+  radius: .2,
   first: {
-    type: SDF,
-    fn: SPHERE,
-    radius: 1
+    type: 'SDF',
+    fn: 'SPHERE',
+    radius: 1,
+    matrix: create()
   },
   second: {
-    type: SDF,
-    fn: BOX,
-    dimensions: [ 1.2, 1.2, 1.2 ]
+    type: 'SDF',
+    fn: 'BOX',
+    dimensions: [ 1.2, 1.2, 1.2 ],
+    matrix: create()
   }
 }
-
-const f = n => n.toPrecision(4)
-const vec3 = ([ x, y, z ]) => `vec3(${ f(x) }, ${ f(y) }, ${ f(z) })`
-
-function glsl ( s, depth = 0 ) {
-  switch ( s.type ) {
-    case SDF: 
-      switch ( s.fn ) {
-        case SPHERE: return `sdf_sphere(p, ${ f(s.radius) })`
-        case BOX:    return `sdf_box(p, ${ vec3(s.dimensions) })`
-        default:     throw new Error('Unknown primitive')
-      } 
-    case OPERATOR:
-      switch ( s.operator ) {
-        case UNION_ROUND: return `sdf_union_round(
-          ${ glsl(s.first) }, 
-          ${ glsl(s.second) }, 
-          ${ f(s.radius) })`
-        default:          throw new Error('Unknown operator')
-      } 
-    default: throw new Error('Invalid scene type')
-  }
-}
-
-
-console.log(glsl(sphere))
-console.log(glsl(scene))
-
 
 const fragToy = regl({
   vert: `
@@ -84,92 +40,7 @@ const fragToy = regl({
       gl_Position = vec4(pos, 0., 1.); 
     } 
   `,
-  frag: `
-    precision mediump float;
-
-    uniform float tick;
-    uniform float dT;
-    uniform vec2 mouse;
-    uniform vec2 viewport;
-    uniform vec3 eye;
-    uniform vec3 target;
-    uniform mat4 camera_matrix;
-    uniform vec3 light;
-    
-    const int MARCH_STEPS = 500;
-    const int MAX_EDITS = 2;
-    const float MIN_DIST = 0.1;
-    const float MAX_DIST = 1000.;
-    const float EPSILON = 0.0001;
-    const float FOV = 45.;
-    const float FOV_FACTOR = 2. / tan(radians(45.));
-
-    ${ look_at + vmax + sdf_union_round + repeat_along + sdf_sphere + sdf_box }
-
-    float sdf_intersection ( float a, float b ) {
-      return max(a, b); 
-    }
-
-    float sdf_union ( float a, float b ) {
-      return min(a, b); 
-    }
-
-    float sdf_difference ( float a, float b ) {
-      return max(a, -b); 
-    }
-
-    
-    // float sdf_scene ( vec3 p ) {
-    //   float r = 1.;
-    //   float x = 0.;
-    //   float y = sin(tick / 40.);
-    //   float spacing = 8.;
-    //   float x_index = repeat_along(p.x, spacing);
-    //   float y_index = repeat_along(p.y, spacing);
-    //   // float z_index = repeat_along(p.z, spacing);
-    //   float z = 0.;
-    //   vec3 b = vec3(r * 1.2);
-    //   mat4 m = mat4(1.,   0.,   0.,   0., 
-    //                 0.,   1.,   0.,   0.,
-    //                 0.,   0.,   1.,   0.,
-    //                 x,    y,    z,    1.);
-
-    //   return sdf_union_round(
-    //     sdf_sphere((m * vec4(p, 1.)).xyz, r),
-    //     sdf_box(p, b),
-    //     r 
-    //   );
-    // }
-
-    float sdf_scene ( vec3 p ) {
-      return ${ glsl(scene) };
-    }
-
-    ${ normal + phong_per_light + phong_illumination }
-    ${ to_surface }
-
-    vec3 ray_direction ( vec2 size ) {
-      vec2 xy = gl_FragCoord.xy - size / 2.;
-      float z = FOV_FACTOR * size.y;
-
-      return normalize(vec3(xy, -z));
-    }
-
-    void main () {
-      vec3 dir = ray_direction(viewport);
-      vec3 cam_dir = (vec4(dir, 1.0) * camera_matrix).xyz;
-      float dist = to_surface(eye, cam_dir);
-      vec3 p = dist * cam_dir + eye;
-      vec3 k_a = vec3(.2);
-      vec3 k_d = vec3(.7, .2, .2);
-      vec3 k_s = vec3(1.);
-      float alpha = 10.;
-
-      gl_FragColor = dist > MAX_DIST - EPSILON
-        ? vec4(0)
-        : vec4(phong_illumination(k_a, k_d, k_s, alpha, light, eye, p), 1);
-    } 
-  `,
+  frag: regl.prop('frag'),
   uniforms: {
     tick: regl.prop('tick'),
     viewport: regl.prop('viewport'),
@@ -192,6 +63,7 @@ const clearProps = {
 }
 
 const props = {
+  frag: frag(scene),
   tick: 0,
   mouse: [ 0, 0 ],
   viewport: [ 0, 0 ],
@@ -241,6 +113,8 @@ regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   const mouseDeltaX = mouseX - props.mouse[0]
   const mouseDeltaY = mouseY - props.mouse[1]
 
+  identity(scene.first.matrix)
+  translate(scene.first.matrix, scene.first.matrix, [ 0, sin(tick / 20), 0 ])
   subtract(forward, props.target, props.eye)
 
   const distance = length(forward)
@@ -259,6 +133,7 @@ regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   props.mouse[1] = mouseY
   props.viewport[0] = viewportWidth
   props.viewport[1] = viewportHeight
+  props.frag = frag(scene)
   lookAt(props.camera_matrix, props.eye, props.target, UP)
 
   regl.clear(clearProps)

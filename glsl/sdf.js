@@ -18,6 +18,27 @@ float sdf_union_round (float a, float b, float r) {
 }
 `
 
+exports.sdf_intersection =
+`
+float sdf_intersection ( float a, float b ) {
+  return max(a, b); 
+}
+`
+
+exports.sdf_union = 
+`
+float sdf_union ( float a, float b ) {
+  return min(a, b); 
+}
+`
+
+exports.sdf_difference = 
+`
+float sdf_difference ( float a, float b ) {
+  return max(a, -b); 
+}
+`
+
 
 
 // SPACE FOLDING
