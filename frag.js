@@ -12,21 +12,26 @@ const map = (f, a) => {
 const f = n => n.toPrecision(4)
 const fmt = (n, v) => n + '(' + map(f, v).join(', ') + ')'
 
-function glsl ( s ) {
+function glsl ( MAX_NODES, s ) {
   switch ( s.type ) {
     case 'SDF': 
       const mat = fmt('mat4', s.matrix)
+      const trans = `mat4(
+          texture2D(transforms, vec2(0, ${ s.index / MAX_NODES })),
+          texture2D(transforms, vec2(.25, ${ s.index / MAX_NODES })),
+          texture2D(transforms, vec2(.5, ${ s.index / MAX_NODES })),
+          texture2D(transforms, vec2(.75, ${ s.index / MAX_NODES })))`
 
       switch ( s.fn ) {
-        case 'SPHERE': return `sdf_sphere((${ mat } * vec4(p, 1.)).xyz, ${ f(s.radius) })`
-        case 'BOX':    return `sdf_box((${ mat } * vec4(p, 1.)).xyz, ${ fmt('vec3', s.dimensions) })`
-        default:     throw new Error('Unknown primitive')
+        case 'SPHERE': return `sdf_sphere((${ trans } * vec4(p, 1.)).xyz, ${ f(s.radius) })`
+        case 'BOX':    return `sdf_box((${ trans } * vec4(p, 1.)).xyz, ${ fmt('vec3', s.dimensions) })`
+        default:       throw new Error('Unknown primitive')
       } 
     case 'OPERATOR':
       switch ( s.operator ) {
         case 'UNION_ROUND': return `sdf_union_round(
-          ${ glsl(s.first) }, 
-          ${ glsl(s.second) }, 
+          ${ glsl(MAX_NODES, s.first) }, 
+          ${ glsl(MAX_NODES, s.second) }, 
           ${ f(s.radius) })`
         default:          throw new Error('Unknown operator')
       } 
@@ -34,7 +39,7 @@ function glsl ( s ) {
   }
 }
 
-module.exports = function ( scene ) {
+module.exports = function ( MAX_NODES, scene ) {
   return `
     precision mediump float;
 
@@ -46,8 +51,9 @@ module.exports = function ( scene ) {
     uniform vec3 target;
     uniform mat4 camera_matrix;
     uniform vec3 light;
+    uniform sampler2D transforms;
     
-    const int MARCH_STEPS = 500;
+    const int MARCH_STEPS = 1024;
     const int MAX_EDITS = 2;
     const float MIN_DIST = 0.1;
     const float MAX_DIST = 1000.;
@@ -70,7 +76,7 @@ module.exports = function ( scene ) {
     }
 
     float sdf_scene ( vec3 p ) {
-      return ${ glsl(scene) };
+      return ${ glsl(MAX_NODES, scene) };
     }
 
     ${ normal + phong_per_light + phong_illumination }

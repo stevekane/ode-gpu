@@ -1,6 +1,5 @@
 const regl = require('regl')({ 
-  extensions: [ 'OES_texture_float', 'EXT_disjoint_timer_query' ],
-  // profile: true
+  extensions: [ 'OES_texture_float' ]
 })
 const { lookAt, identity, create, translate } = require('gl-mat4')
 const { cross, add, subtract, scale, length, normalize } = require('gl-vec3')
@@ -8,23 +7,41 @@ const frag = require('./frag')
 const canvas = regl._gl.canvas
 const { abs, sin, cos } = Math
 
+const MAX_NODES = 64
+const TRANSFORMS_SIZE = 16 * MAX_NODES
+const transformsBuffer = new Float32Array(TRANSFORMS_SIZE)
+const transforms = regl.texture({
+  shape: [ 4, MAX_NODES ],
+  data: transformsBuffer,
+  type: 'float',
+  min: 'nearest',
+  mag: 'nearest',
+  wrap: 'clamp'
+})
+
 const scene = {
   type: 'OPERATOR',
   operator: 'UNION_ROUND',
-  radius: .2,
+  radius: .1,
   first: {
+    index: 0,
     type: 'SDF',
     fn: 'SPHERE',
     radius: 1,
-    matrix: create()
+    matrix: transformsBuffer.subarray(0, 16)
   },
   second: {
+    index: 1,
     type: 'SDF',
     fn: 'BOX',
     dimensions: [ 1.2, 1.2, 1.2 ],
-    matrix: create()
+    matrix: transformsBuffer.subarray(16, 32)
   }
 }
+
+identity(scene.first.matrix, scene.first.matrix)
+identity(scene.second.matrix, scene.second.matrix)
+translate(scene.first.matrix, scene.first.matrix, [ -1, -1, 0 ])
 
 const fragToy = regl({
   vert: `
@@ -48,7 +65,8 @@ const fragToy = regl({
     eye: regl.prop('eye'),
     target: regl.prop('target'),
     camera_matrix: regl.prop('camera_matrix'),
-    light: regl.prop('light')
+    light: regl.prop('light'),
+    transforms: regl.prop('transforms')
   },
   attributes: {
     pos: [ [ -4, -4 ], [ 0, 4 ], [ 4, -4 ] ]
@@ -63,14 +81,15 @@ const clearProps = {
 }
 
 const props = {
-  frag: frag(scene),
+  frag: frag(MAX_NODES, scene),
   tick: 0,
   mouse: [ 0, 0 ],
   viewport: [ 0, 0 ],
   eye: [ 0, 4, 10 ],
   target: [ 0, 0, 0 ],
   light: [ 0, 6, 0 ],
-  camera_matrix: create()
+  camera_matrix: create(),
+  transforms: transforms
 }
 
 const buttons = {
@@ -113,8 +132,9 @@ regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   const mouseDeltaX = mouseX - props.mouse[0]
   const mouseDeltaY = mouseY - props.mouse[1]
 
-  identity(scene.first.matrix)
-  translate(scene.first.matrix, scene.first.matrix, [ 0, sin(tick / 20), 0 ])
+  identity(scene.first.matrix, scene.first.matrix)
+  translate(scene.first.matrix, scene.first.matrix, [ sin(tick / 30), cos(tick / 30), 0 ])
+
   subtract(forward, props.target, props.eye)
 
   const distance = length(forward)
@@ -133,9 +153,10 @@ regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   props.mouse[1] = mouseY
   props.viewport[0] = viewportWidth
   props.viewport[1] = viewportHeight
-  props.frag = frag(scene)
+  props.frag = frag(MAX_NODES, scene)
   lookAt(props.camera_matrix, props.eye, props.target, UP)
 
   regl.clear(clearProps)
+  transforms.subimage(transformsBuffer)
   fragToy(props)
 })
