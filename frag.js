@@ -1,7 +1,3 @@
-const { vmax, sdf_union_round, repeat_along, sdf_sphere, sdf_box } = require('./glsl/sdf')
-const { normal, phong_illumination, phong_per_light } = require('./glsl/lighting')
-const { ray_direction, to_surface } = require('./glsl/ray_marching')
-
 const map = (f, a) => { 
   const out = []
 
@@ -16,24 +12,24 @@ function glsl ( MAX_NODES, s ) {
   switch ( s.type ) {
     case 'SDF': 
       const mat = fmt('mat4', s.matrix)
-      const trans = `mat4(
-          texture2D(transforms, vec2(0, ${ s.index / MAX_NODES })),
-          texture2D(transforms, vec2(.25, ${ s.index / MAX_NODES })),
-          texture2D(transforms, vec2(.5, ${ s.index / MAX_NODES })),
-          texture2D(transforms, vec2(.75, ${ s.index / MAX_NODES })))`
+      const trans = `mat4(vec4(1, 0, 0, 0), vec4(0, 1, 0, 0), vec4(0, 0, 1, 0), texture2D(transforms, vec2(.75, ${ s.index / MAX_NODES })))`
 
       switch ( s.fn ) {
-        case 'SPHERE': return `sdf_sphere((${ trans } * vec4(p, 1.)).xyz, ${ f(s.radius) })`
-        case 'BOX':    return `sdf_box((${ trans } * vec4(p, 1.)).xyz, ${ fmt('vec3', s.dimensions) })`
-        default:       throw new Error('Unknown primitive')
+        case 'sdf_sphere': return `sdf_sphere((${ trans } * vec4(p, 1.)).xyz, ${ f(s.radius) })`
+        case 'sdf_box':    return `sdf_box((${ trans } * vec4(p, 1.)).xyz, ${ fmt('vec3', s.dimensions) })`
+        default:           throw new Error('Unknown primitive')
       } 
     case 'OPERATOR':
       switch ( s.operator ) {
-        case 'UNION_ROUND': return `sdf_union_round(
+        case 'sdf_union':
+        case 'sdf_intersection':
+        case 'sdf_difference':
+          return `${ s.operator }(${ glsl(MAX_NODES, s.first) }, ${ glsl(MAX_NODES, s.second) })`
+        case 'sdf_union_round': return `sdf_union_round(
           ${ glsl(MAX_NODES, s.first) }, 
           ${ glsl(MAX_NODES, s.second) }, 
           ${ f(s.radius) })`
-        default:          throw new Error('Unknown operator')
+        default:           throw new Error('Unknown operator')
       } 
     default: throw new Error('Invalid scene type')
   }
@@ -61,7 +57,25 @@ module.exports = function ( MAX_NODES, scene ) {
     const float FOV = 45.;
     const float FOV_FACTOR = 2. / tan(radians(45.));
 
-    ${ vmax + sdf_union_round + repeat_along + sdf_sphere + sdf_box }
+    float vmax ( vec3 v ) {
+      return max(max(v.x, v.y), v.z); 
+    }
+
+    float sdf_sphere ( vec3 p, float r ) {
+      return length(p) - r;
+    }
+
+    float sdf_box ( vec3 p, vec3 b ) {
+      vec3 d = abs(p) - b;
+
+      return length(max(d, vec3(0))) + vmax(min(d, vec3(0)));
+    }
+
+    float sdf_union_round ( float a, float b, float r ) {
+      vec2 u = max(vec2(r - a,r - b), vec2(0));
+
+      return max(r, min (a, b)) - length(u);
+    }
 
     float sdf_intersection ( float a, float b ) {
       return max(a, b); 
@@ -75,12 +89,71 @@ module.exports = function ( MAX_NODES, scene ) {
       return max(a, -b); 
     }
 
+    float sdf_repeat_along (inout float p, float size) {
+      float halfsize = size * 0.5;
+      float c = floor((p + halfsize)/size);
+
+      p = mod(p + halfsize, size) - halfsize;
+      return c;
+    }
+
     float sdf_scene ( vec3 p ) {
       return ${ glsl(MAX_NODES, scene) };
     }
 
-    ${ normal + phong_per_light + phong_illumination }
-    ${ to_surface }
+    vec3 normal ( vec3 pos ) {
+      const vec3 v1 = vec3( 1.0, -1.0, -1.0);
+      const vec3 v2 = vec3(-1.0, -1.0,  1.0);
+      const vec3 v3 = vec3(-1.0,  1.0, -1.0);
+      const vec3 v4 = vec3( 1.0,  1.0,  1.0);
+
+      return normalize(
+        v1 * sdf_scene(pos + v1 * EPSILON) +
+        v2 * sdf_scene(pos + v2 * EPSILON) +
+        v3 * sdf_scene(pos + v3 * EPSILON) +
+        v4 * sdf_scene(pos + v4 * EPSILON));
+    }
+
+    vec3 phong_per_light ( vec3 k_d, vec3 k_s, float a, vec3 i, vec3 light, vec3 eye, vec3 p ) {
+      vec3 n = normal(p);
+      vec3 l = normalize(light - p);
+      vec3 v = normalize(eye - p);
+      vec3 r = normalize(reflect(-l, n));
+      float dotLN = dot(l, n);
+      float dotRV = dot(r, v);
+      float dist_squared = pow(l.x - p.x, 2.) + pow(l.y - p.y, 2.) + pow(l.z - p.z, 2.);
+      float attenuation = 1. / (.01 * dist_squared + 1.);
+
+      return attenuation * (dotLN < 0. 
+        ? vec3(0.)
+        : dotRV < 0.
+          ? i * (k_d * dotLN)
+          : i * (k_d * dotLN + k_s * pow(dotRV, a)));
+    }
+
+    vec3 phong ( vec3 k_a, vec3 k_d, vec3 k_s, float a, vec3 light, vec3 eye, vec3 p ) {
+      vec3 ambient = vec3(.1);
+      vec3 color = ambient * k_a;
+      vec3 intensity = vec3(1.);
+
+      color += phong_per_light(k_d, k_s, a, intensity, light, eye, p);
+      return color;
+    }
+
+    float to_surface ( vec3 eye, vec3 dir ) {
+      float depth = MIN_DIST;
+
+      for ( int i = 0; i < MARCH_STEPS; i++) {
+        float dist = sdf_scene(dir * depth + eye); 
+
+        if ( dist < EPSILON ) return depth;
+        
+        depth += dist;
+
+        if ( depth >= MAX_DIST ) return MAX_DIST; 
+      }
+      return MAX_DIST;
+    }
 
     vec3 ray_direction ( vec2 size ) {
       vec2 xy = gl_FragCoord.xy - size / 2.;
@@ -101,7 +174,7 @@ module.exports = function ( MAX_NODES, scene ) {
 
       gl_FragColor = dist > MAX_DIST - EPSILON
         ? vec4(0)
-        : vec4(phong_illumination(k_a, k_d, k_s, alpha, light, eye, p), 1);
+        : vec4(phong(k_a, k_d, k_s, alpha, light, eye, p), 1);
     } 
   `
 }

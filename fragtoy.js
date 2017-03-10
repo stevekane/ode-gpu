@@ -1,4 +1,4 @@
-const regl = require('regl')({ 
+const regl = require('regl')({
   extensions: [ 'OES_texture_float' ]
 })
 const { lookAt, identity, create, translate } = require('gl-mat4')
@@ -19,29 +19,61 @@ const transforms = regl.texture({
   wrap: 'clamp'
 })
 
-const scene = {
-  type: 'OPERATOR',
-  operator: 'UNION_ROUND',
-  radius: .1,
-  first: {
-    index: 0,
-    type: 'SDF',
-    fn: 'SPHERE',
-    radius: 1,
-    matrix: transformsBuffer.subarray(0, 16)
-  },
-  second: {
-    index: 1,
-    type: 'SDF',
-    fn: 'BOX',
-    dimensions: [ 1.2, 1.2, 1.2 ],
-    matrix: transformsBuffer.subarray(16, 32)
-  }
+const n1 = {
+  index: 0,
+  type: 'SDF',
+  fn: 'sdf_sphere',
+  radius: 1.5,
+  matrix: transformsBuffer.subarray(0, 16)
+}
+const n2 = {
+  index: 1,
+  type: 'SDF',
+  fn: 'sdf_sphere',
+  radius: 1.5,
+  matrix: transformsBuffer.subarray(16, 32)
+}
+const n3 = {
+  index: 2,
+  type: 'SDF',
+  fn: 'sdf_sphere',
+  radius: 1.5,
+  matrix: transformsBuffer.subarray(32, 48)
+}
+const n4 = {
+  index: 3,
+  type: 'SDF',
+  fn: 'sdf_sphere',
+  radius: 1.3,
+  matrix: transformsBuffer.subarray(48, 64)
 }
 
-identity(scene.first.matrix, scene.first.matrix)
-identity(scene.second.matrix, scene.second.matrix)
-translate(scene.first.matrix, scene.first.matrix, [ -1, -1, 0 ])
+const scene = {
+  type: 'OPERATOR',
+  operator: 'sdf_difference',
+  first: {
+    type: 'OPERATOR',
+    operator: 'sdf_union_round',
+    radius: .1,
+    first: n1,
+    second: {
+      type: 'OPERATOR',
+      operator: 'sdf_union_round',
+      radius: .1,
+      first: n2,
+      second: n3
+    }
+  },
+  second: n4,
+}
+
+identity(n1.matrix, n1.matrix)
+identity(n2.matrix, n2.matrix)
+identity(n3.matrix, n3.matrix)
+identity(n4.matrix, n4.matrix)
+translate(n1.matrix, n1.matrix, [ 0, 1, 0 ])
+translate(n2.matrix, n2.matrix, [ 1, 0, 0 ])
+translate(n3.matrix, n3.matrix, [ 0, 0, 1 ])
 
 const fragToy = regl({
   vert: `
@@ -132,8 +164,13 @@ regl.frame(function ({ tick, viewportWidth, viewportHeight, pixelRatio }) {
   const mouseDeltaX = mouseX - props.mouse[0]
   const mouseDeltaY = mouseY - props.mouse[1]
 
-  identity(scene.first.matrix, scene.first.matrix)
-  translate(scene.first.matrix, scene.first.matrix, [ sin(tick / 30), cos(tick / 30), 0 ])
+  identity(n1.matrix, n1.matrix)
+  identity(n2.matrix, n2.matrix)
+  identity(n3.matrix, n3.matrix)
+  identity(n4.matrix, n4.matrix)
+  translate(n1.matrix, n1.matrix, [ 0, sin(tick / 20), cos(tick / 20) ])
+  translate(n2.matrix, n2.matrix, [ sin(tick / 20), cos(tick / 20), 0 ])
+  translate(n3.matrix, n3.matrix, [ sin(tick / 20), 0, cos(tick / 20) ])
 
   subtract(forward, props.target, props.eye)
 
